@@ -220,8 +220,8 @@
            ===================================================================== */
         const C = {
             W: 1280, H: 720,
-            PADDLE_W: 240, PADDLE_H: 16, PADDLE_Y: 720 - 90, // TWEAKED: Wider paddle
-            BALL_R: 18, BALL_SPEED_0: 12, SPEED_INC: 0.3, MAX_SPEED: 35, // TWEAKED: Slower start & easier curve
+            PADDLE_W: 240, PADDLE_H: 16, PADDLE_Y: 720 - 90, 
+            BALL_R: 18, BALL_SPEED_0: 10, SPEED_INC: 0.3, MAX_SPEED: 35, // Dropped base speed to 10 for better stability
             COLORS: {
                 paddle: '#00f3ff', ball: '#00ffaa', trail: '#288c5a',
                 score: '#ffe664', dead: '#ff3366', glass: 'rgba(5, 8, 15, 0.65)'
@@ -258,12 +258,13 @@
                 this.r = Math.random() * 5 + 2;
                 this.active = true;
             }
-            update() {
+            update(timeScale) {
                 if (!this.active) return false;
-                this.x += this.vx; this.y += this.vy;
-                this.vy += 0.4; 
-                this.vx *= 0.98; 
-                this.life -= this.decay;
+                this.x += this.vx * timeScale; 
+                this.y += this.vy * timeScale;
+                this.vy += 0.4 * timeScale; 
+                this.vx *= Math.pow(0.98, timeScale); 
+                this.life -= this.decay * timeScale;
                 if (this.life <= 0) this.active = false;
                 return this.active;
             }
@@ -279,9 +280,9 @@
         class TrailNode {
             constructor() { this.active = false; }
             spawn(x, y) { this.x = x; this.y = y; this.alpha = 1.0; this.active = true; }
-            update() {
+            update(timeScale) {
                 if (!this.active) return;
-                this.alpha -= 0.08;
+                this.alpha -= 0.08 * timeScale;
                 if (this.alpha <= 0) this.active = false;
             }
         }
@@ -303,10 +304,10 @@
                 this.idx = (this.idx + 1) % this.pool.length;
                 return item;
             }
-            updateAll(ctx, drawFunc = false) {
+            updateAll(ctx, timeScale, drawFunc = false) {
                 for (let i = 0; i < this.pool.length; i++) {
                     if (this.pool[i].active) {
-                        this.pool[i].update();
+                        this.pool[i].update(timeScale);
                         if (drawFunc) this.pool[i].draw(ctx);
                     }
                 }
@@ -393,6 +394,7 @@
                 this.speed = C.BALL_SPEED_0;
                 this.shake = 0;
                 this.slowmoTimer = 0;
+                this.launchTimer = 0;
 
                 this.finger = { x: C.W/2, y: C.H/2, active: false, rawX: C.W/2 };
 
@@ -434,7 +436,12 @@
             reset() {
                 this.score = 0;
                 this.stateTimer = 0; 
-                this.bx = C.W / 2; this.by = C.H / 3;
+                
+                // NEW: 1 second hover delay before dropping so player can react
+                this.launchTimer = 1000; 
+                
+                this.bx = C.W / 2; 
+                this.by = C.H / 5; // NEW: Spawn higher up the screen to give more reaction time
                 this.speed = C.BALL_SPEED_0;
                 
                 const angle = Utils.lerp(Math.PI * 0.3, Math.PI * 0.7, Math.random());
@@ -483,16 +490,20 @@
             }
 
             updatePhysics(dt) {
-                let dtMod = 1.0;
+                // NEW: Frame-rate normalization. 
+                // Prevents the ball from falling 2x/3x faster on 120Hz/144Hz monitors.
+                const timeScale = dt / 16.666; 
+                let dtMod = timeScale;
+
                 if (this.slowmoTimer > 0) {
-                    dtMod = 0.3; 
+                    dtMod *= 0.3; 
                     this.slowmoTimer -= dt;
                 }
 
+                // Smooth paddle tracking independent of framerate
                 this.pTarget = this.finger.rawX - C.PADDLE_W / 2;
                 this.pTarget = Utils.clamp(this.pTarget, 0, C.W - C.PADDLE_W);
-                // TWEAKED: Increased lerp to 0.6 so the paddle tracks your hand much faster
-                this.px = Utils.lerp(this.px, this.pTarget, 0.6);
+                this.px = Utils.lerp(this.px, this.pTarget, Math.min(1, 0.4 * timeScale));
 
                 if (this.state === 'dead') {
                     this.stateTimer += dt / 1000;
@@ -500,15 +511,26 @@
 
                 if (this.state !== 'playing') return;
 
+                // NEW: Launch Delay logic
+                if (this.launchTimer > 0) {
+                    this.launchTimer -= dt;
+                    // Add a gentle, pulsing hover effect while waiting to drop
+                    this.by = (C.H / 5) + Math.sin(performance.now() * 0.005) * 8; 
+                    return;
+                }
+
+                // 2. Ball Physics
                 this.bx += this.bvx * dtMod;
                 this.by += this.bvy * dtMod;
 
                 if (this.frameCount % 2 === 0) this.trails.get().spawn(this.bx, this.by);
 
+                // Walls
                 if (this.bx - C.BALL_R <= 0) { this.bx = C.BALL_R; this.bvx *= -1; this.shake = 2; }
                 else if (this.bx + C.BALL_R >= C.W) { this.bx = C.W - C.BALL_R; this.bvx *= -1; this.shake = 2; }
                 if (this.by - C.BALL_R <= 0) { this.by = C.BALL_R; this.bvy *= -1; this.shake = 2; }
 
+                // Paddle Collision
                 const ballB = this.by + C.BALL_R;
                 if (ballB >= C.PADDLE_Y - 4 && ballB <= C.PADDLE_Y + C.PADDLE_H + 4 && this.bvy > 0) {
                     if (this.bx >= this.px - C.BALL_R && this.bx <= this.px + C.PADDLE_W + C.BALL_R) {
@@ -538,6 +560,7 @@
                     }
                 }
 
+                // Game Over
                 if (this.by - C.BALL_R > C.H + 50) {
                     this.state = 'dead';
                     this.stateTimer = 0; 
@@ -555,7 +578,7 @@
                 }
             }
 
-            render(time) {
+            render(time, timeScale) {
                 const ctx = this.r.ctx;
                 const ox = this.shake > 0 ? (Math.random() - 0.5) * this.shake : 0;
                 const oy = this.shake > 0 ? (Math.random() - 0.5) * this.shake : 0;
@@ -583,7 +606,7 @@
                 }
                 ctx.globalCompositeOperation = 'source-over';
 
-                this.particles.updateAll(ctx, true);
+                this.particles.updateAll(ctx, timeScale, true);
                 ctx.globalAlpha = 1.0;
 
                 const dangerAlpha = 0.2 + 0.15 * Math.abs(Math.sin(time * 0.005));
@@ -595,7 +618,15 @@
                 ctx.drawImage(this.r.assets.paddle.img, this.px - this.r.assets.paddle.offset, C.PADDLE_Y - this.r.assets.paddle.offset);
 
                 if (this.state !== 'dead') {
-                    ctx.drawImage(this.r.assets.ball.img, this.bx - C.BALL_R - this.r.assets.ball.offset, this.by - C.BALL_R - this.r.assets.ball.offset);
+                    // Make the ball pulse slightly during the launch delay
+                    if (this.launchTimer > 0) {
+                        const pulse = 1 + Math.sin(time * 0.01) * 0.1;
+                        const drawSize = (C.BALL_R * 2 + this.r.assets.ball.offset * 2) * pulse;
+                        const drawOff = drawSize / 2;
+                        ctx.drawImage(this.r.assets.ball.img, this.bx - drawOff, this.by - drawOff, drawSize, drawSize);
+                    } else {
+                        ctx.drawImage(this.r.assets.ball.img, this.bx - C.BALL_R - this.r.assets.ball.offset, this.by - C.BALL_R - this.r.assets.ball.offset);
+                    }
                 }
 
                 if (this.finger.active) {
@@ -663,10 +694,11 @@
 
                 this.updatePhysics(dt);
                 
-                this.trails.updateAll(null, false);
+                const timeScale = dt / 16.666;
+                this.trails.updateAll(null, timeScale, false);
                 if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 0.05);
 
-                this.render(time);
+                this.render(time, timeScale);
             }
         }
 
