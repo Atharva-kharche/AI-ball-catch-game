@@ -55,10 +55,6 @@
             touch-action: none;
         }
 
-        /* 
-         * FIX: Do not use display: none on video, as some browsers will pause 
-         * the stream, breaking MediaPipe. Instead, hide it visually.
-         */
         video { 
             position: absolute;
             width: 1px;
@@ -224,8 +220,8 @@
            ===================================================================== */
         const C = {
             W: 1280, H: 720,
-            PADDLE_W: 160, PADDLE_H: 16, PADDLE_Y: 720 - 90,
-            BALL_R: 18, BALL_SPEED_0: 18, SPEED_INC: 0.6, MAX_SPEED: 45,
+            PADDLE_W: 240, PADDLE_H: 16, PADDLE_Y: 720 - 90, // TWEAKED: Wider paddle
+            BALL_R: 18, BALL_SPEED_0: 12, SPEED_INC: 0.3, MAX_SPEED: 35, // TWEAKED: Slower start & easier curve
             COLORS: {
                 paddle: '#00f3ff', ball: '#00ffaa', trail: '#288c5a',
                 score: '#ffe664', dead: '#ff3366', glass: 'rgba(5, 8, 15, 0.65)'
@@ -398,7 +394,6 @@
                 this.shake = 0;
                 this.slowmoTimer = 0;
 
-                // Add y so it tracks perfectly on screen
                 this.finger = { x: C.W/2, y: C.H/2, active: false, rawX: C.W/2 };
 
                 this.dom = {
@@ -463,9 +458,8 @@
                 
                 if (isActive) {
                     this.finger.rawX = rawX;
-                    this.finger.y = rawY; // FIX: Ensure Y coordinate updates for rendering the finger circle
+                    this.finger.y = rawY; 
                     
-                    // FIX: Auto-start logic with a cooldown for 'dead' state
                     if (this.state === 'waiting') {
                         this.start();
                     } else if (this.state === 'dead' && this.stateTimer > 1.5) {
@@ -489,27 +483,23 @@
             }
 
             updatePhysics(dt) {
-                // Time delta modifier for slow-mo
                 let dtMod = 1.0;
                 if (this.slowmoTimer > 0) {
                     dtMod = 0.3; 
                     this.slowmoTimer -= dt;
                 }
 
-                // FIX: Paddle Movement happens regardless of state so you always have visual feedback
                 this.pTarget = this.finger.rawX - C.PADDLE_W / 2;
                 this.pTarget = Utils.clamp(this.pTarget, 0, C.W - C.PADDLE_W);
-                this.px = Utils.lerp(this.px, this.pTarget, 0.3);
+                // TWEAKED: Increased lerp to 0.6 so the paddle tracks your hand much faster
+                this.px = Utils.lerp(this.px, this.pTarget, 0.6);
 
-                // Increment state timer for "Game Over" cooldown
                 if (this.state === 'dead') {
                     this.stateTimer += dt / 1000;
                 }
 
-                // Stop updating ball physics if not playing
                 if (this.state !== 'playing') return;
 
-                // 2. Ball Physics
                 this.bx += this.bvx * dtMod;
                 this.by += this.bvy * dtMod;
 
@@ -519,7 +509,6 @@
                 else if (this.bx + C.BALL_R >= C.W) { this.bx = C.W - C.BALL_R; this.bvx *= -1; this.shake = 2; }
                 if (this.by - C.BALL_R <= 0) { this.by = C.BALL_R; this.bvy *= -1; this.shake = 2; }
 
-                // Paddle Collision
                 const ballB = this.by + C.BALL_R;
                 if (ballB >= C.PADDLE_Y - 4 && ballB <= C.PADDLE_Y + C.PADDLE_H + 4 && this.bvy > 0) {
                     if (this.bx >= this.px - C.BALL_R && this.bx <= this.px + C.PADDLE_W + C.BALL_R) {
@@ -549,10 +538,9 @@
                     }
                 }
 
-                // Game Over
                 if (this.by - C.BALL_R > C.H + 50) {
                     this.state = 'dead';
-                    this.stateTimer = 0; // reset cooldown timer
+                    this.stateTimer = 0; 
                     this.shake = 25;
                     this.r.triggerFlash(C.COLORS.dead, 0.5);
                     this.spawnSparks(C.W/2, C.H/2, 60, this.r.cDeadRGB);
@@ -658,7 +646,6 @@
                     ctx.fillText(`SCORE: ${Utils.formatNum(this.score)}`, C.W/2, C.H/2 + 10);
 
                     ctx.font = "600 20px 'Segoe UI'"; ctx.fillStyle = "rgba(150, 160, 200, 1)";
-                    // Change prompt if the cooldown hasn't finished yet
                     const cooldownReady = this.stateTimer > 1.5;
                     ctx.fillText(cooldownReady ? "SHOW HAND OR PRESS SPACE TO REBOOT" : "PROCESSING...", C.W/2, C.H/2 + 80);
                 }
